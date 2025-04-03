@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { ShieldCheck, Upload, CheckCircle2, AlertTriangle, Camera, Mail, Phone } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 const UserVerification = () => {
   const [activeTab, setActiveTab] = useState('document');
@@ -25,9 +26,31 @@ const UserVerification = () => {
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
 
-  const handleDocumentUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleDocumentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
+      const file = e.target.files[0];
       setDocumentUploaded(true);
+      
+      try {
+        const { data: existingBuckets } = await supabase.storage.listBuckets();
+        const verificationBucketExists = existingBuckets?.some(bucket => bucket.name === 'verification-documents');
+        
+        if (!verificationBucketExists) {
+          await supabase.storage.createBucket('verification-documents', {
+            public: false
+          });
+        }
+        
+        const { data, error } = await supabase.storage
+          .from('verification-documents')
+          .upload(`${Date.now()}-${file.name}`, file);
+          
+        if (error) {
+          toast.error("Error uploading document: " + error.message);
+        }
+      } catch (error: any) {
+        console.error("Storage error:", error);
+      }
     }
   };
 
@@ -123,7 +146,7 @@ const UserVerification = () => {
                   Upload a government-issued ID (passport, driver's license, etc.)
                 </p>
                 <label htmlFor="id-document-upload">
-                  <Button as="span">
+                  <Button className="cursor-pointer">
                     Choose File
                   </Button>
                   <input

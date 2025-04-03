@@ -1,5 +1,4 @@
-
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -25,6 +24,25 @@ const ResumeScanner = () => {
   const [scanProgress, setScanProgress] = useState(0);
   const [extractedData, setExtractedData] = useState<ExtractedData | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (cameraActive) {
+      const videoElement = document.getElementById('user-camera') as HTMLVideoElement;
+      if (videoElement) {
+        navigator.mediaDevices.getUserMedia({ video: true })
+          .then(stream => {
+            videoElement.srcObject = stream;
+          })
+          .catch(err => {
+            console.error("Error accessing camera:", err);
+            setCameraActive(false);
+            toast.error("Could not access camera. Please check permissions.");
+          });
+      }
+    }
+  }, [cameraActive]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -163,6 +181,7 @@ const ResumeScanner = () => {
                 Select File
               </Button>
               <input
+                ref={fileInputRef}
                 id="resume-upload"
                 type="file"
                 accept=".pdf,.doc,.docx"
