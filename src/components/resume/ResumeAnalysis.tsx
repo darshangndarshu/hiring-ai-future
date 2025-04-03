@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -49,7 +48,7 @@ const ResumeAnalysis = () => {
               Drag and drop your resume file or click to browse
             </p>
             <label htmlFor="resume-upload">
-              <Button as="span">
+              <Button className="cursor-pointer">
                 Choose File
               </Button>
               <input

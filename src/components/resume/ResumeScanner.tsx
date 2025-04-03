@@ -6,6 +6,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { FileText, Upload, CheckCircle2, AlertTriangle, Scan } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 interface ExtractedData {
   name: string;
@@ -95,6 +97,33 @@ const ResumeScanner = () => {
     }, 300);
   };
 
+  const saveToSupabase = async () => {
+    if (!extractedData) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('resumes')
+        .insert([
+          { 
+            name: extractedData.name,
+            email: extractedData.email,
+            phone: extractedData.phone,
+            education: extractedData.education,
+            experience: extractedData.experience,
+            skills: extractedData.skills,
+            status: 'new'
+          }
+        ]);
+      
+      if (error) throw error;
+      
+      toast.success("Resume saved to database successfully!");
+    } catch (error) {
+      console.error("Error saving to database:", error);
+      toast.error("Failed to save resume to database. Please try again.");
+    }
+  };
+
   const resetScanner = () => {
     setFile(null);
     setScanComplete(false);
@@ -130,7 +159,7 @@ const ResumeScanner = () => {
               Upload your resume in PDF or Word format (max 5MB)
             </p>
             <label htmlFor="resume-upload">
-              <Button as="span">
+              <Button className="cursor-pointer">
                 Select File
               </Button>
               <input
@@ -260,7 +289,7 @@ const ResumeScanner = () => {
             </div>
 
             <div className="flex gap-3 pt-2">
-              <Button className="flex-1">
+              <Button className="flex-1" onClick={saveToSupabase}>
                 Save to Database
               </Button>
               <Button variant="outline" onClick={resetScanner} className="flex-1">
