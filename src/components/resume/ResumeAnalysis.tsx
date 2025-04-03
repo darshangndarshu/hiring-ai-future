@@ -1,34 +1,82 @@
-import { useState } from 'react';
+
+import { useState, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FileText, Upload, CheckCircle2, AlertTriangle, ListChecks, TrendingUp } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+import { useAuth } from "@/components/auth/AuthProvider";
 
 const ResumeAnalysis = () => {
   const [uploadedResume, setUploadedResume] = useState<File | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isAnalysisComplete, setIsAnalysisComplete] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { user } = useAuth();
 
-  const handleResumeUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setUploadedResume(e.target.files[0]);
+  const triggerFileInput = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
     }
   };
 
-  const analyzeResume = () => {
+  const handleResumeUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setUploadedResume(file);
+      toast.success(`File "${file.name}" selected successfully`);
+    }
+  };
+
+  const analyzeResume = async () => {
+    if (!uploadedResume || !user) return;
+    
     setIsAnalyzing(true);
-    // Simulate analysis time
-    setTimeout(() => {
+    
+    try {
+      // Upload file to Supabase storage
+      const fileExt = uploadedResume.name.split('.').pop();
+      const fileName = `${user.id}-${Date.now()}-analysis.${fileExt}`;
+      
+      const { data: buckets } = await supabase.storage.listBuckets();
+      const analysisBucketExists = buckets?.some(bucket => bucket.name === 'resume-analysis');
+      
+      if (!analysisBucketExists) {
+        await supabase.storage.createBucket('resume-analysis', {
+          public: false
+        });
+      }
+      
+      const { data, error } = await supabase.storage
+        .from('resume-analysis')
+        .upload(fileName, uploadedResume);
+        
+      if (error) {
+        throw error;
+      }
+      
+      // Simulate analysis time
+      setTimeout(() => {
+        setIsAnalyzing(false);
+        setIsAnalysisComplete(true);
+        toast.success("Resume analysis complete!");
+      }, 2500);
+    } catch (error: any) {
+      console.error("Error during analysis:", error);
+      toast.error("Error analyzing resume: " + error.message);
       setIsAnalyzing(false);
-      setIsAnalysisComplete(true);
-    }, 2500);
+    }
   };
 
   const resetAnalysis = () => {
     setUploadedResume(null);
     setIsAnalysisComplete(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   return (
@@ -47,18 +95,20 @@ const ResumeAnalysis = () => {
             <p className="text-sm text-muted-foreground text-center mb-4">
               Drag and drop your resume file or click to browse
             </p>
-            <label htmlFor="resume-upload">
-              <Button className="cursor-pointer">
-                Choose File
-              </Button>
-              <input
-                id="resume-upload"
-                type="file"
-                accept=".pdf,.doc,.docx"
-                className="hidden"
-                onChange={handleResumeUpload}
-              />
-            </label>
+            <Button 
+              className="cursor-pointer"
+              onClick={triggerFileInput}
+            >
+              Choose File
+            </Button>
+            <input
+              ref={fileInputRef}
+              id="resume-upload"
+              type="file"
+              accept=".pdf,.doc,.docx"
+              className="hidden"
+              onChange={handleResumeUpload}
+            />
           </div>
         )}
 

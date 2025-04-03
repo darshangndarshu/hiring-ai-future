@@ -1,6 +1,6 @@
 
-import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { Navigate, useNavigate, useLocation } from "react-router-dom";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -12,6 +12,9 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Info } from "lucide-react";
 
 const loginSchema = z.object({
   email: z.string().email({ message: "Please enter a valid email address" }),
@@ -29,7 +32,26 @@ const signupSchema = loginSchema.extend({
 
 export default function Auth() {
   const [activeTab, setActiveTab] = useState<"login" | "signup">("login");
+  const [showEmailConfirmationAlert, setShowEmailConfirmationAlert] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  const { refreshSession } = useAuth();
+  
+  useEffect(() => {
+    // Check for hash parameters in URL that might indicate auth actions
+    const hashParams = new URLSearchParams(location.hash.substring(1));
+    const errorCode = hashParams.get("error_code");
+    const errorDescription = hashParams.get("error_description");
+    
+    if (errorCode && errorDescription) {
+      if (errorCode === "401" && errorDescription.includes("Email not confirmed")) {
+        setShowEmailConfirmationAlert(true);
+        toast.error("Please confirm your email before logging in");
+      } else {
+        toast.error(errorDescription);
+      }
+    }
+  }, [location]);
   
   // Check if user is already logged in
   const { data: session, isLoading } = useQuery({
@@ -61,13 +83,20 @@ export default function Auth() {
 
   const onLogin = async (values: z.infer<typeof loginSchema>) => {
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { error, data } = await supabase.auth.signInWithPassword({
         email: values.email,
         password: values.password,
       });
 
-      if (error) throw error;
+      if (error) {
+        if (error.message.includes("Email not confirmed")) {
+          setShowEmailConfirmationAlert(true);
+          throw new Error("Please confirm your email before logging in");
+        }
+        throw error;
+      }
       
+      await refreshSession();
       toast.success("Logged in successfully");
       navigate("/");
     } catch (error: any) {
@@ -77,7 +106,7 @@ export default function Auth() {
 
   const onSignup = async (values: z.infer<typeof signupSchema>) => {
     try {
-      const { error } = await supabase.auth.signUp({
+      const { error, data } = await supabase.auth.signUp({
         email: values.email,
         password: values.password,
         options: {
@@ -90,10 +119,43 @@ export default function Auth() {
 
       if (error) throw error;
       
-      toast.success("Account created successfully! Please check your email to confirm your account.");
-      setActiveTab("login");
+      if (data.user && data.user.identities && data.user.identities.length === 0) {
+        toast.error("This email is already registered. Please login instead.");
+        setActiveTab("login");
+        return;
+      }
+      
+      if (!data.session) {
+        setShowEmailConfirmationAlert(true);
+        toast.success("Account created successfully! Please check your email to confirm your account.");
+      } else {
+        toast.success("Account created and logged in successfully!");
+        navigate("/");
+      }
     } catch (error: any) {
       toast.error(error.message || "Failed to create account");
+    }
+  };
+  
+  const resendConfirmationEmail = async () => {
+    const email = loginForm.getValues().email || signupForm.getValues().email;
+    
+    if (!email) {
+      toast.error("Please enter your email address first");
+      return;
+    }
+    
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: email,
+      });
+      
+      if (error) throw error;
+      
+      toast.success("Confirmation email has been resent. Please check your inbox.");
+    } catch (error: any) {
+      toast.error(error.message || "Failed to resend confirmation email");
     }
   };
 
@@ -113,6 +175,22 @@ export default function Auth() {
           <CardDescription>Enter your credentials to access your account</CardDescription>
         </CardHeader>
         <CardContent>
+          {showEmailConfirmationAlert && (
+            <Alert className="mb-6 bg-amber-50 border-amber-200">
+              <Info className="h-4 w-4 text-amber-600" />
+              <AlertDescription className="text-amber-700">
+                <p>Please confirm your email before logging in. Check your inbox for a confirmation link.</p>
+                <Button 
+                  variant="link" 
+                  className="text-amber-700 font-medium p-0 h-auto" 
+                  onClick={resendConfirmationEmail}
+                >
+                  Resend confirmation email
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+          
           <Tabs value={activeTab} onValueChange={(value: string) => setActiveTab(value as "login" | "signup")}>
             <TabsList className="grid w-full grid-cols-2 mb-6">
               <TabsTrigger value="login">Login</TabsTrigger>

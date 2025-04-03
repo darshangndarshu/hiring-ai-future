@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,6 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useAuth } from "@/components/auth/AuthProvider";
 
 interface ExtractedData {
   name: string;
@@ -26,6 +28,7 @@ const ResumeScanner = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { user } = useAuth();
 
   useEffect(() => {
     if (cameraActive) {
@@ -64,59 +67,90 @@ const ResumeScanner = () => {
       
       setFile(selectedFile);
       setErrorMessage(null);
+      toast.success(`File "${selectedFile.name}" selected successfully`);
     }
   };
 
-  const scanResume = () => {
+  const scanResume = async () => {
     if (!file) return;
     
     setIsScanning(true);
     setScanProgress(0);
     
-    // Simulate scanning progress
-    const interval = setInterval(() => {
-      setScanProgress(prev => {
-        const newProgress = prev + 10;
-        if (newProgress >= 100) {
-          clearInterval(interval);
-          setTimeout(() => {
-            setIsScanning(false);
-            setScanComplete(true);
-            // Mock extracted data
-            setExtractedData({
-              name: "John Smith",
-              email: "john.smith@example.com",
-              phone: "(555) 123-4567",
-              education: [
-                { degree: "Bachelor of Computer Science", institution: "Stanford University", year: "2020" },
-                { degree: "Master of Software Engineering", institution: "MIT", year: "2022" }
-              ],
-              experience: [
-                { 
-                  title: "Software Engineer", 
-                  company: "TechCorp", 
-                  duration: "2022-2024",
-                  description: "Developed scalable web applications using React and Node.js" 
-                },
-                { 
-                  title: "Frontend Developer", 
-                  company: "WebSolutions", 
-                  duration: "2020-2022",
-                  description: "Created responsive user interfaces and optimized website performance" 
-                }
-              ],
-              skills: ["JavaScript", "TypeScript", "React", "Node.js", "GraphQL", "AWS", "CI/CD", "Agile"]
-            });
-          }, 500);
-          return 100;
-        }
-        return newProgress;
-      });
-    }, 300);
+    try {
+      // Upload file to Supabase storage
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}.${fileExt}`;
+      
+      const { data: buckets } = await supabase.storage.listBuckets();
+      const resumeBucketExists = buckets?.some(bucket => bucket.name === 'resumes');
+      
+      if (!resumeBucketExists) {
+        await supabase.storage.createBucket('resumes', {
+          public: true
+        });
+      }
+      
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('resumes')
+        .upload(`uploads/${fileName}`, file);
+        
+      if (uploadError) {
+        console.error("Upload error:", uploadError);
+        toast.error("Error uploading file. Please try again.");
+        setIsScanning(false);
+        return;
+      }
+      
+      // Simulate scanning progress
+      const interval = setInterval(() => {
+        setScanProgress(prev => {
+          const newProgress = prev + 10;
+          if (newProgress >= 100) {
+            clearInterval(interval);
+            setTimeout(() => {
+              setIsScanning(false);
+              setScanComplete(true);
+              // Mock extracted data
+              setExtractedData({
+                name: "John Smith",
+                email: "john.smith@example.com",
+                phone: "(555) 123-4567",
+                education: [
+                  { degree: "Bachelor of Computer Science", institution: "Stanford University", year: "2020" },
+                  { degree: "Master of Software Engineering", institution: "MIT", year: "2022" }
+                ],
+                experience: [
+                  { 
+                    title: "Software Engineer", 
+                    company: "TechCorp", 
+                    duration: "2022-2024",
+                    description: "Developed scalable web applications using React and Node.js" 
+                  },
+                  { 
+                    title: "Frontend Developer", 
+                    company: "WebSolutions", 
+                    duration: "2020-2022",
+                    description: "Created responsive user interfaces and optimized website performance" 
+                  }
+                ],
+                skills: ["JavaScript", "TypeScript", "React", "Node.js", "GraphQL", "AWS", "CI/CD", "Agile"]
+              });
+            }, 500);
+            return 100;
+          }
+          return newProgress;
+        });
+      }, 300);
+    } catch (error) {
+      console.error("Error during scan:", error);
+      toast.error("Error scanning resume. Please try again.");
+      setIsScanning(false);
+    }
   };
 
   const saveToSupabase = async () => {
-    if (!extractedData) return;
+    if (!extractedData || !user) return;
     
     try {
       const { data, error } = await supabase
@@ -129,6 +163,7 @@ const ResumeScanner = () => {
             education: extractedData.education,
             experience: extractedData.experience,
             skills: extractedData.skills,
+            user_id: user.id,
             status: 'new'
           }
         ]);
@@ -147,6 +182,15 @@ const ResumeScanner = () => {
     setScanComplete(false);
     setExtractedData(null);
     setScanProgress(0);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const simulateClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
   };
 
   return (
@@ -176,19 +220,20 @@ const ResumeScanner = () => {
             <p className="text-sm text-muted-foreground text-center mb-4">
               Upload your resume in PDF or Word format (max 5MB)
             </p>
-            <label htmlFor="resume-upload">
-              <Button className="cursor-pointer">
-                Select File
-              </Button>
-              <input
-                ref={fileInputRef}
-                id="resume-upload"
-                type="file"
-                accept=".pdf,.doc,.docx"
-                className="hidden"
-                onChange={handleFileChange}
-              />
-            </label>
+            <Button 
+              className="cursor-pointer"
+              onClick={simulateClick}
+            >
+              Select File
+            </Button>
+            <input
+              ref={fileInputRef}
+              id="resume-upload"
+              type="file"
+              accept=".pdf,.doc,.docx"
+              className="hidden"
+              onChange={handleFileChange}
+            />
           </div>
         )}
 

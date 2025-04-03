@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,6 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { ShieldCheck, Upload, CheckCircle2, AlertTriangle, Camera, Mail, Phone } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useAuth } from "@/components/auth/AuthProvider";
 
 const UserVerification = () => {
   const [activeTab, setActiveTab] = useState('document');
@@ -25,84 +26,192 @@ const UserVerification = () => {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [selfieImage, setSelfieImage] = useState<string | null>(null);
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { user } = useAuth();
+
+  useEffect(() => {
+    if (cameraActive && videoRef.current) {
+      navigator.mediaDevices.getUserMedia({ video: true })
+        .then(stream => {
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+          }
+        })
+        .catch(error => {
+          console.error("Error accessing camera:", error);
+          toast.error("Could not access camera. Please check permissions.");
+          setCameraActive(false);
+        });
+    }
+    
+    return () => {
+      if (cameraActive && videoRef.current && videoRef.current.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        const tracks = stream.getTracks();
+        tracks.forEach(track => track.stop());
+      }
+    };
+  }, [cameraActive]);
+
+  const triggerFileInput = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
 
   const handleDocumentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
+      setUploadedFile(file);
       setDocumentUploaded(true);
-      
-      try {
-        const { data: existingBuckets } = await supabase.storage.listBuckets();
-        const verificationBucketExists = existingBuckets?.some(bucket => bucket.name === 'verification-documents');
-        
-        if (!verificationBucketExists) {
-          await supabase.storage.createBucket('verification-documents', {
-            public: false
-          });
-        }
-        
-        const { data, error } = await supabase.storage
-          .from('verification-documents')
-          .upload(`${Date.now()}-${file.name}`, file);
-          
-        if (error) {
-          toast.error("Error uploading document: " + error.message);
-        }
-      } catch (error: any) {
-        console.error("Storage error:", error);
-      }
+      toast.success(`Document "${file.name}" selected successfully`);
     }
   };
 
-  const verifyDocument = () => {
+  const verifyDocument = async () => {
+    if (!uploadedFile || !user) return;
+    
     setDocumentVerifying(true);
-    setTimeout(() => {
+    
+    try {
+      const { data: buckets } = await supabase.storage.listBuckets();
+      const bucketExists = buckets?.some(bucket => bucket.name === 'verification-documents');
+      
+      if (!bucketExists) {
+        await supabase.storage.createBucket('verification-documents', {
+          public: false
+        });
+      }
+      
+      const fileName = `${user.id}-${Date.now()}-${uploadedFile.name}`;
+      const { data, error } = await supabase.storage
+        .from('verification-documents')
+        .upload(fileName, uploadedFile);
+        
+      if (error) {
+        toast.error("Error uploading document: " + error.message);
+        setDocumentVerifying(false);
+        return;
+      }
+      
+      setTimeout(() => {
+        setDocumentVerifying(false);
+        setDocumentVerified(true);
+        updateProgress();
+        toast.success("Document verified successfully!");
+      }, 2000);
+      
+    } catch (error: any) {
+      console.error("Storage error:", error);
+      toast.error("Error during verification: " + error.message);
       setDocumentVerifying(false);
-      setDocumentVerified(true);
-      updateProgress();
-    }, 2000);
+    }
   };
 
   const toggleCamera = () => {
     setCameraActive(prev => !prev);
     if (cameraActive) {
       setPhotoTaken(false);
+      setSelfieImage(null);
     }
   };
 
   const takePhoto = () => {
-    setPhotoTaken(true);
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const context = canvas.getContext('2d');
+      
+      if (context) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/png');
+        setSelfieImage(dataUrl);
+        setPhotoTaken(true);
+        
+        const stream = video.srcObject as MediaStream;
+        if (stream) {
+          const tracks = stream.getTracks();
+          tracks.forEach(track => track.stop());
+        }
+        video.srcObject = null;
+      }
+    }
   };
 
-  const verifyPhoto = () => {
+  const verifyPhoto = async () => {
+    if (!selfieImage || !user) return;
+    
     setPhotoVerifying(true);
-    setTimeout(() => {
+    
+    try {
+      const response = await fetch(selfieImage);
+      const blob = await response.blob();
+      
+      const { data: buckets } = await supabase.storage.listBuckets();
+      const bucketExists = buckets?.some(bucket => bucket.name === 'selfies');
+      
+      if (!bucketExists) {
+        await supabase.storage.createBucket('selfies', {
+          public: false
+        });
+      }
+      
+      const fileName = `${user.id}-${Date.now()}.png`;
+      const { data, error } = await supabase.storage
+        .from('selfies')
+        .upload(fileName, blob);
+        
+      if (error) {
+        toast.error("Error uploading selfie: " + error.message);
+        setPhotoVerifying(false);
+        return;
+      }
+      
+      setTimeout(() => {
+        setPhotoVerifying(false);
+        setPhotoVerified(true);
+        updateProgress();
+        toast.success("Selfie verified successfully!");
+      }, 2000);
+      
+    } catch (error: any) {
+      console.error("Storage error:", error);
+      toast.error("Error during verification: " + error.message);
       setPhotoVerifying(false);
-      setPhotoVerified(true);
-      updateProgress();
-    }, 2000);
+    }
   };
 
   const sendEmailCode = () => {
     if (!email) return;
     setEmailSent(true);
+    toast.success(`Verification code sent to ${email}`);
   };
 
   const verifyEmail = () => {
     if (!otp) return;
     setEmailVerified(true);
     updateProgress();
+    toast.success("Email verified successfully!");
   };
 
   const sendPhoneCode = () => {
     if (!phone) return;
     setPhoneSent(true);
+    toast.success(`Verification code sent to ${phone}`);
   };
 
   const verifyPhone = () => {
     if (!otp) return;
     setPhoneVerified(true);
     updateProgress();
+    toast.success("Phone verified successfully!");
   };
 
   const updateProgress = () => {
@@ -145,18 +254,20 @@ const UserVerification = () => {
                 <p className="text-sm text-muted-foreground text-center mb-4">
                   Upload a government-issued ID (passport, driver's license, etc.)
                 </p>
-                <label htmlFor="id-document-upload">
-                  <Button className="cursor-pointer">
-                    Choose File
-                  </Button>
-                  <input
-                    id="id-document-upload"
-                    type="file"
-                    accept="image/*,.pdf"
-                    className="hidden"
-                    onChange={handleDocumentUpload}
-                  />
-                </label>
+                <Button 
+                  className="cursor-pointer"
+                  onClick={triggerFileInput}
+                >
+                  Choose File
+                </Button>
+                <input
+                  id="id-document-upload"
+                  type="file"
+                  accept="image/*,.pdf"
+                  className="hidden"
+                  ref={fileInputRef}
+                  onChange={handleDocumentUpload}
+                />
               </div>
             ) : !documentVerifying && !documentVerified ? (
               <div className="space-y-4">
@@ -164,7 +275,7 @@ const UserVerification = () => {
                   <div className="flex items-center">
                     <Upload className="h-8 w-8 text-primary mr-3" />
                     <div>
-                      <p className="font-medium">ID_Document.jpg</p>
+                      <p className="font-medium">{uploadedFile?.name}</p>
                       <p className="text-sm text-muted-foreground">
                         Ready for verification
                       </p>
@@ -197,7 +308,7 @@ const UserVerification = () => {
                 <div className="bg-white rounded-md p-3 flex justify-between items-center">
                   <div className="flex items-center gap-2">
                     <Upload className="h-5 w-5 text-muted-foreground" />
-                    <p className="text-sm font-medium">ID_Document.jpg</p>
+                    <p className="text-sm font-medium">{uploadedFile?.name}</p>
                   </div>
                   <div className="flex items-center text-sm text-emerald-600">
                     <CheckCircle2 className="h-4 w-4 mr-1" />
@@ -224,12 +335,13 @@ const UserVerification = () => {
               <div className="space-y-4">
                 <div className="relative aspect-video bg-black rounded-lg overflow-hidden flex items-center justify-center">
                   <video
+                    ref={videoRef}
                     id="user-camera"
                     autoPlay
                     playsInline
                     muted
                     className="absolute inset-0 w-full h-full object-cover"
-                  ></video>
+                  />
                   
                   <div className="absolute inset-0 border-4 border-dashed border-white/40 rounded-lg m-8"></div>
                   
@@ -246,17 +358,19 @@ const UserVerification = () => {
                     Take Photo
                   </Button>
                 </div>
+                
+                <canvas ref={canvasRef} className="hidden" />
               </div>
             ) : photoTaken && !photoVerifying && !photoVerified ? (
               <div className="space-y-4">
                 <div className="relative aspect-video bg-muted rounded-lg overflow-hidden">
-                  <div className="absolute inset-0 bg-gray-600 flex items-center justify-center">
+                  {selfieImage && (
                     <img 
-                      src="https://placehold.co/400x300" 
+                      src={selfieImage} 
                       alt="Selfie preview" 
                       className="w-full h-full object-cover"
                     />
-                  </div>
+                  )}
                 </div>
                 
                 <div className="flex gap-3">
